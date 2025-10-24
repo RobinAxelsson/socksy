@@ -9,64 +9,68 @@ internal class Program
 {
     public static async Task Main(string[] args)
     {
-        const int WSL_PROXY_PORT = 8888;
+        const int WSL_RELAY_PORT = 8888;
         const string WINDOWS_SERVICE_URL = "http://localhost:5000/";
 
-        //The Wsl proxy waits for incoming connection from windows client proxy A
+        //The WslRelay waits for incoming connection from WindowsRelay
         _ = Task.Run(async () =>
         {
 
-            Console.WriteLine("WslProxy: listens on port " + WSL_PROXY_PORT);
+            Console.WriteLine("WslRelay: listens on port " + WSL_RELAY_PORT);
 
-            using var listener = new TcpListener(IPAddress.Loopback, WSL_PROXY_PORT);
+            using var listener = new TcpListener(IPAddress.Loopback, WSL_RELAY_PORT);
             listener.Start();
 
             while (true)
             {
                 var client = await listener.AcceptTcpClientAsync();
+
                 using var networkStream = client.GetStream();
-                var bytes = Encoding.UTF8.GetBytes("WslProxy_Hello\n");
+                var bytes = Encoding.UTF8.GetBytes("hello_world\n");
                 await networkStream.WriteAsync(bytes);
+                var @byte = networkStream.ReadByte();
             }
         }).ContinueWith(task =>
         {
             if (task.IsFaulted)
             {
-                Console.WriteLine("WslProxy: task faulted");
+                Console.WriteLine("WslRelay: task faulted");
                 Console.WriteLine(task.Exception);
             }
             else
             {
-                Console.WriteLine("WslProxy: task ended");
+                Console.WriteLine("WslRelay: task ended");
             }
         }).ConfigureAwait(false);
 
-        //The windows client proxy initiates the connection to the WslProxy (the listener in this code).
+        //The WinRelay initiates the connection to the WslRelay (the listener in this code).
         _ = Task.Run(async () =>
         {
             await Task.Delay(3000);
 
-            using var client = new TcpClient();
-            await client.ConnectAsync(new IPEndPoint(IPAddress.Loopback, WSL_PROXY_PORT));
-            using var stream = client.GetStream();
-            using var reader = new StreamReader(stream);
-            using var writer = new StreamWriter(stream);
-            Console.WriteLine("WindowsClientProxy: Connection established to wsl");
+            using var wslRelayClient = new TcpClient();
+            await wslRelayClient.ConnectAsync(new IPEndPoint(IPAddress.Loopback, WSL_RELAY_PORT));
 
-            var httpProxyClient = new HttpClient();
+            using var wslStream = wslRelayClient.GetStream();
+            using var wslReader = new StreamReader(wslStream);
+            using var wslWriter = new StreamWriter(wslStream);
+            Console.WriteLine("WinRelay: Connection established to wsl");
+
+            var winServiceClient = new HttpClient();
 
             while (true)
             {
-                var text = await reader.ReadLineAsync();
-                if (!string.IsNullOrEmpty(text))
+                var messageToWinService = await wslReader.ReadLineAsync();
+                if (!string.IsNullOrEmpty(messageToWinService))
                 {
-                    Console.WriteLine("WindowsClientProxy: relaying " + text);
-                    var response = await httpProxyClient.GetAsync(WINDOWS_SERVICE_URL + text);
+                    Console.WriteLine("WinRelay: " + messageToWinService);
+                    var response = await winServiceClient.GetAsync(WINDOWS_SERVICE_URL + messageToWinService);
                     response.EnsureSuccessStatusCode();
-                    var content = await response.Content.ReadAsStringAsync();
-                    Console.WriteLine("WindowsClientProxy: received \"" + content + "\"");
+                    
+                    var winServiceContent = await response.Content.ReadAsStringAsync();
+                    Console.WriteLine("WinRelay: " + winServiceContent);
 
-                    await writer.WriteAsync(content);
+                    await wslWriter.WriteAsync(winServiceContent);
                 }
                 await Task.Delay(100);
             }
@@ -74,33 +78,33 @@ internal class Program
         {
             if (task.IsFaulted)
             {
-                Console.WriteLine("WindowsClientProxy: task faulted");
+                Console.WriteLine("WinRelay: task faulted");
                 Console.WriteLine(task.Exception);
             }
             else
             {
-                Console.WriteLine("WindowsClientProxy: task ended");
+                Console.WriteLine("WinRelay: task ended");
             }
         }).ConfigureAwait(false);
 
         //Example http server on windows that wsl want to reach
         _ = Task.Run(async () =>
         {
-            var listener = new HttpListener();
-            listener.Prefixes.Add(WINDOWS_SERVICE_URL);
-            listener.Start();
-            Console.WriteLine("WindowsService: listening on " + WINDOWS_SERVICE_URL);
+            var winServiceListener = new HttpListener();
+            winServiceListener.Prefixes.Add(WINDOWS_SERVICE_URL);
+            winServiceListener.Start();
+            Console.WriteLine("WinService: listening on " + WINDOWS_SERVICE_URL);
 
             while (true)
             {
-                var context = await listener.GetContextAsync();
+                var context = await winServiceListener.GetContextAsync();
                 var request = context.Request;
-                Console.WriteLine("WindowsService got request url: " + request.Url);
+                var message = request?.Url?.AbsoluteUri.Split('/')[^1] ?? "no message";
+                Console.WriteLine("WinService: " + message);
 
                 var response = context.Response;
 
-                string responseText = $"WindowsService: hello, you requested {request.Url}";
-                byte[] buffer = Encoding.UTF8.GetBytes(responseText);
+                byte[] buffer = Encoding.UTF8.GetBytes(message);
                 response.ContentLength64 = buffer.Length;
 
                 await response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
@@ -111,12 +115,12 @@ internal class Program
         {
             if (task.IsFaulted)
             {
-                Console.WriteLine("WindowsService: faulted");
+                Console.WriteLine("WinService: faulted");
                 Console.WriteLine(task.Exception);
             }
             else
             {
-                Console.WriteLine("WindowsService: task ended");
+                Console.WriteLine("WinService: task ended");
             }
         }).ConfigureAwait(false);
 
