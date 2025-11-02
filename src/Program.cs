@@ -9,106 +9,147 @@ namespace socksy;
 internal class Program
 {
     const int WSL_RELAY_PORT = 8888;
+    const int e = 8888;
     const string WINDOWS_SERVICE_URL = "http://localhost:5000/";
     private static Thread? WslRealayThread;
     private static Thread? WinRelayThread;
+    //private const int hashCompare = 
 
-    public static async Task Main(string[] args)
+    public static void Main(string[] args)
     {
-        RunWslRelayThread();
-        RunWinRelayThread();
+        var listener = new TcpListener(IPAddress.Loopback, WSL_RELAY_PORT);
+        listener.Start();
+        var client = listener.AcceptTcpClient();
+        Console.WriteLine("accepted client");
+        using var stream = client.GetStream();
+ 
+        var bytes = new byte[8192];
 
-        //Example http server on windows that wsl want to reach
-        _ = Task.Run(async () =>
+        for (int i = 0; i < bytes.Length; i++)
         {
-            var httpListener = new HttpListener();
-            httpListener.Prefixes.Add(WINDOWS_SERVICE_URL);
-            httpListener.Start();
-            Console.WriteLine("WinService: listening on " + WINDOWS_SERVICE_URL);
-
-            while (true)
+            var res = stream.ReadByte();
+            if (res == -1)
             {
-                var context = await httpListener.GetContextAsync();
-                var request = context.Request;
-                var message = request?.Url?.AbsoluteUri.Split('/')[^1] ?? "no message";
-                Console.WriteLine("WinService: " + message);
-
-                var response = context.Response;
-
-                byte[] buffer = Encoding.UTF8.GetBytes(message);
-                response.ContentLength64 = buffer.Length;
-
-                await response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
-                response.Close();
+                Console.WriteLine("End of stream");
+                i--;
+                Thread.Sleep(1000);
+                continue;
             }
-        })
-        .ContinueWith(task =>
-        {
-            if (task.IsFaulted)
+
+            if (i > 3)
             {
-                Console.WriteLine("WinService: faulted");
-                Console.WriteLine(task.Exception);
-            }
-            else
-            {
-                Console.WriteLine("WinService: task ended");
-            }
-        }).ConfigureAwait(false);
+                int a = bytes[i-3]; //\r
+                int b = bytes[i-2]; //\n
+                int c = bytes[i-1]; //\r
+                int d = bytes[i];   //\n
 
-        while (true)
-        {
-            await Task.Delay(100);
-        }
-    }
-
-    private static void RunWinRelayThread()
-    {
-        void WinRelayStart()
-        {
-            Thread.Sleep(3000);
-
-            using var wslRelayClient = new TcpClient();
-            wslRelayClient.Connect(new IPEndPoint(IPAddress.Loopback, WSL_RELAY_PORT));
-
-            using var wslStream = wslRelayClient.GetStream();
-            using var wslReader = new StreamReader(wslStream);
-            using var wslWriter = new StreamWriter(wslStream);
-
-            var winServiceClient = new HttpClient();
-
-            try
-            {
-                while (true)
+                if(a == '\r' && b == '\n')
                 {
-                    var messageToWinService = wslReader.ReadLine();
-                    if (!string.IsNullOrEmpty(messageToWinService))
-                    {
-                        Console.WriteLine("WinRelay: " + messageToWinService);
-                        var response = winServiceClient.GetAsync(WINDOWS_SERVICE_URL + messageToWinService).GetAwaiter().GetResult();
-                        response.EnsureSuccessStatusCode();
-
-                        var winServiceContent = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
-                        Console.WriteLine("WinRelay: " + winServiceContent);
-
-                        wslWriter.Write(winServiceContent + '\n');
-                        wslWriter.Flush(); //NOTE (robin): without flushing it does not send theh bytes
-                        Task.Delay(1000);
-                    }
-                    Thread.Sleep(30);
+                    _ = "";
                 }
             }
-            catch (Exception ex)
-            {
-                Console.WriteLine("WinRelay: proc faulted");
-                Console.WriteLine(ex);
-            }
-            Console.WriteLine("WinRelay: proc ended");
+            
+            bytes[i] = (byte)res;
+            Console.Write((char)res);
         }
 
-        WinRelayThread = new Thread(WinRelayStart);
-        WinRelayThread.Name = "Win Realay thread";
-        WinRelayThread.Start();
+
+        //Environment.Exit(0);
+
+        //RunWslRelayThread();
+        ////RunWinRelayThread();
+
+        ////Example http server on windows that wsl want to reach
+        //_ = Task.Run(async () =>
+        //{
+        //    var httpListener = new HttpListener();
+        //    httpListener.Prefixes.Add(WINDOWS_SERVICE_URL);
+        //    httpListener.Start();
+        //    Console.WriteLine("WinService: listening on " + WINDOWS_SERVICE_URL);
+
+        //    while (true)
+        //    {
+        //        var context = await httpListener.GetContextAsync();
+        //        var request = context.Request;
+        //        var message = request?.Url?.AbsoluteUri.Split('/')[^1] ?? "no message";
+        //        Console.WriteLine("WinService: " + message);
+
+        //        var response = context.Response;
+
+        //        byte[] buffer = Encoding.UTF8.GetBytes(message);
+        //        response.ContentLength64 = buffer.Length;
+
+        //        await response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
+        //        response.Close();
+        //    }
+        //})
+        //.ContinueWith(task =>
+        //{
+        //    if (task.IsFaulted)
+        //    {
+        //        Console.WriteLine("WinService: faulted");
+        //        Console.WriteLine(task.Exception);
+        //    }
+        //    else
+        //    {
+        //        Console.WriteLine("WinService: task ended");
+        //    }
+        //}).ConfigureAwait(false);
+
+        //while (true)
+        //{
+        //    await Task.Delay(100);
+        //}
     }
+
+    //private static void RunWinRelayThread()
+    //{
+    //    void WinRelayStart()
+    //    {
+    //        Thread.Sleep(3000);
+
+    //        using var wslRelayClient = new TcpClient();
+    //        wslRelayClient.Connect(new IPEndPoint(IPAddress.Loopback, WSL_RELAY_PORT));
+
+    //        using var wslStream = wslRelayClient.GetStream();
+    //        using var wslReader = new StreamReader(wslStream);
+    //        using var wslWriter = new StreamWriter(wslStream);
+
+    //        var winServiceClient = new HttpClient();
+
+    //        try
+    //        {
+    //            while (true)
+    //            {
+    //                var messageToWinService = wslReader.ReadLine();
+    //                if (!string.IsNullOrEmpty(messageToWinService))
+    //                {
+    //                    Console.WriteLine("WinRelay: " + messageToWinService);
+    //                    var response = winServiceClient.GetAsync(WINDOWS_SERVICE_URL + messageToWinService).GetAwaiter().GetResult();
+    //                    response.EnsureSuccessStatusCode();
+
+    //                    var winServiceContent = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+    //                    Console.WriteLine("WinRelay: " + winServiceContent);
+
+    //                    wslWriter.Write(winServiceContent + '\n');
+    //                    wslWriter.Flush(); //NOTE (robin): without flushing it does not send theh bytes
+    //                    Task.Delay(1000);
+    //                }
+    //                Thread.Sleep(30);
+    //            }
+    //        }
+    //        catch (Exception ex)
+    //        {
+    //            Console.WriteLine("WinRelay: proc faulted");
+    //            Console.WriteLine(ex);
+    //        }
+    //        Console.WriteLine("WinRelay: proc ended");
+    //    }
+
+    //    WinRelayThread = new Thread(WinRelayStart);
+    //    WinRelayThread.Name = "Win Realay thread";
+    //    WinRelayThread.Start();
+    //}
 
     private static void RunWslRelayThread()
     {
@@ -116,7 +157,7 @@ internal class Program
 
         void WslRelayStart()
         {
-            Console.WriteLine("WslRelay: listens on port " + WSL_RELAY_PORT);
+            Console.WriteLine($"WslRelay: listens on port {WSL_RELAY_PORT}");
 
             using var listener = new TcpListener(IPAddress.Loopback, WSL_RELAY_PORT);
             listener.Start();
